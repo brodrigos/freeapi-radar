@@ -13,7 +13,7 @@ import { writeReports } from './src/report.js';
 import { toLiteLLM } from './src/litellm.js';
 import { SOURCES } from './src/seeds.js';
 import { collectFindings, dispatchAlert, emailReady, formatAlert, loadAlertConfig } from './src/notify.js';
-import { probeSmtp } from './src/email.js';
+import { probeBrevo, probeSmtp } from './src/email.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const DB = path.join(ROOT, 'data', 'radar.sqlite');
@@ -238,6 +238,33 @@ async function mailCheck() {
   console.log(`provedor:  ${e.provider}`);
   console.log(`destino:   ${e.to ?? c.dim('— configure email.to')}`);
   console.log(`remetente: ${e.from || e.user || c.dim('—')}`);
+
+  if (e.provider === 'brevo') {
+    if (!e.apiKey) {
+      console.log(c.yellow('falta apiKey em config/alerts.json'));
+      return;
+    }
+    const r = await probeBrevo({ apiKey: e.apiKey, ...(e.baseUrl ? { baseUrl: e.baseUrl } : {}) });
+    if (!r.ok) {
+      console.log(c.red(`chave inválida (HTTP ${r.status})`) + (r.account?.message ? ` — ${r.account.message}` : ''));
+      return;
+    }
+    console.log(
+      `chave:     ${c.green('válida')} · conta ${r.account?.email ?? '—'}${r.account?.credits ? ` · ${r.account.credits}` : ''}`,
+    );
+    const bare = String(e.from || e.user || '')
+      .replace(/^.*<|>.*$/g, '')
+      .trim()
+      .toLowerCase();
+    const match = r.senders.find((s) => String(s.email).toLowerCase() === bare);
+    if (match?.active) console.log(`remetente: ${c.green('verificado')} (${bare})`);
+    else if (match) console.log(`remetente: ${c.yellow('existe mas inativo')} (${bare})`);
+    else
+      console.log(
+        `remetente: ${c.yellow('não verificado')} — verifique ${bare || '(email.from)'} em senders.brevo.com, senão o envio é recusado`,
+      );
+    return;
+  }
 
   if (e.provider !== 'smtp') {
     console.log(emailReady(cfg) ? c.green('chave de API presente') : c.yellow('falta apiKey'));

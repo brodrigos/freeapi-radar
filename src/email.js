@@ -95,7 +95,7 @@ function makeChannel(socket) {
 const codeOf = (reply) => Number(String(reply).slice(0, 3));
 
 /** Envelope SMTP precisa do endereço puro, mesmo que o cabeçalho tenha nome exibido. */
-const bareAddress = (value) => {
+export const bareAddress = (value) => {
   const inside = /<([^>]+)>/.exec(String(value ?? ''));
   return (inside ? inside[1] : String(value ?? '')).trim();
 };
@@ -213,24 +213,70 @@ export async function sendSmtp({ host, port = 465, secure = true, user, pass, fr
 
 /* ------------------------------------------------------------- APIs HTTP */
 
-export async function sendBrevo({ apiKey, from, to, subject, text }) {
-  const res = await request('https://api.brevo.com/v3/smtp/email', {
+export async function sendBrevo({ apiKey, from, to, subject, text, baseUrl }) {
+  const base = baseUrl || 'https://api.brevo.com/v3';
+  const res = await request(`${base}/smtp/email`, {
     method: 'POST',
     headers: { 'api-key': apiKey, 'content-type': 'application/json' },
     body: JSON.stringify({
-      sender: { email: from, name: 'Free API Radar' },
-      to: [{ email: to }],
+      sender: { email: bareAddress(from), name: 'Free API Radar' },
+      to: [{ email: bareAddress(to) }],
       subject,
       textContent: text,
     }),
     timeout: 20000,
     retries: 0,
   });
-  return { provider: 'brevo', ok: res.ok, status: res.status, detail: res.text.slice(0, 200) };
+  let detail = res.text.slice(0, 300);
+  try {
+    const json = JSON.parse(res.text);
+    detail = json.message ?? json.code ?? detail;
+  } catch {
+    /* resposta não-JSON */
+  }
+  return { provider: 'brevo', ok: res.ok, status: res.status, detail };
 }
 
-export async function sendResend({ apiKey, from, to, subject, text }) {
-  const res = await request('https://api.resend.com/emails', {
+/** Valida a chave e lista remetentes: o erro clássico é enviar de um e-mail não verificado. */
+export async function probeBrevo({ apiKey, baseUrl }) {
+  const base = baseUrl || 'https://api.brevo.com/v3';
+  const headers = { 'api-key': apiKey, accept: 'application/json' };
+  const [account, senders] = await Promise.all([
+    request(`${base}/account`, { headers, timeout: 15000, retries: 0 }),
+    request(`${base}/senders`, { headers, timeout: 15000, retries: 0 }).catch(() => null),
+  ]);
+
+  let accountInfo = null;
+  try {
+    const json = JSON.parse(account.text);
+    accountInfo = {
+      email: json.email ?? null,
+      company: json.companyName ?? null,
+      credits: Array.isArray(json.plan) ? json.plan.map((p) => `${p.type}:${p.credits}`).join(' ') : null,
+      message: json.message ?? null,
+    };
+  } catch {
+    /* ignore */
+  }
+
+  let senderList = [];
+  if (senders?.ok) {
+    try {
+      senderList = (JSON.parse(senders.text).senders ?? []).map((s) => ({
+        email: s.email,
+        active: Boolean(s.active),
+      }));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return { ok: account.ok, status: account.status, account: accountInfo, senders: senderList };
+}
+
+export async function sendResend({ apiKey, from, to, subject, text, baseUrl }) {
+  const base = baseUrl || 'https://api.resend.com';
+  const res = await request(`${base}/emails`, {
     method: 'POST',
     headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({ from, to: [to], subject, text }),
@@ -248,7 +294,6 @@ export async function sendEmail(cfg, { subject, text }) {
 
   if (cfg.provider === 'brevo' && cfg.apiKey) return sendBrevo({ ...cfg, from, to, subject, text });
   if (cfg.provider === 'resend' && cfg.apiKey) return sendResend({ ...cfg, from, to, subject, text });
-
   // O Google mostra a senha de app em blocos ("abcd efgh ijkl mnop"); o SMTP quer sem espaços.
   const host = cfg.host || 'smtp.gmail.com';
   const pass = /gmail/i.test(host) ? String(cfg.pass ?? '').replace(/\s+/g, '') : cfg.pass;

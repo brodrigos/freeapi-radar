@@ -41,6 +41,7 @@ export function loadAlertConfig(rootDir) {
       apiKey: process.env.RADAR_EMAIL_API_KEY ?? emailFile.apiKey ?? null,
       from: process.env.RADAR_EMAIL_FROM ?? emailFile.from ?? null,
       to: process.env.RADAR_EMAIL_TO ?? emailFile.to ?? null,
+      baseUrl: process.env.RADAR_EMAIL_BASE ?? emailFile.baseUrl ?? null,
     },
     webhook: process.env.RADAR_WEBHOOK_URL ?? fromFile.webhook ?? null,
     minScore: Number(process.env.RADAR_ALERT_MIN ?? fromFile.minScore ?? 60),

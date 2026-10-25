@@ -110,6 +110,14 @@ AUTH PLAIN/LOGIN, assunto em RFC 2047 e corpo base64 — nada de dependência.
 Sem Gmail/2FA, dá para usar API: `{"provider":"brevo","apiKey":"...","from":"voce@gmail.com","to":"..."}`
 (Brevo free: 300/dia, basta verificar o remetente) ou `resend` (exige domínio verificado).
 
+Com a Brevo, `mail-check` valida a chave e diz se o remetente já foi verificado — o erro mais comum é
+tentar enviar de um e-mail ainda não confirmado:
+
+```
+chave:     válida · conta voce@gmail.com · free:300
+remetente: verificado (voce@gmail.com)
+```
+
 Telegram e webhook continuam disponíveis por ambiente:
 
 ```bash
@@ -178,6 +186,7 @@ O verificador e o score são genéricos: qualquer fonte que produza esse formato
 node test/smoke-dashboard.mjs          # JS do dashboard contra um DOM falso
 node test/verify-alerts.mjs            # canal webhook com receptor local
 node test/verify-email.mjs             # SMTP contra um servidor falso (AUTH + MIME)
+node test/verify-brevo.mjs             # API da Brevo contra servidor falso (payload + mail-check)
 node test/verify-dashboard-tool.mjs    # abre a ferramenta no hub (Chrome headless/CDP)
 ```
 
