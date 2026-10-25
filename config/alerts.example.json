@@ -1,5 +1,15 @@
 {
-  "_comentario": "Copie para config/alerts.json (não versionado) e preencha o que for usar. Variáveis de ambiente têm prioridade.",
+  "_comentario": "Copie para config/alerts.json (não versionado) e preencha o canal que for usar. Variáveis de ambiente têm prioridade.",
+  "email": {
+    "provider": "smtp",
+    "host": "smtp.gmail.com",
+    "port": 465,
+    "secure": true,
+    "user": "seu@gmail.com",
+    "pass": "senha-de-app",
+    "from": "Free API Radar <seu@gmail.com>",
+    "to": "seu@gmail.com"
+  },
   "telegram": {
     "token": "",
     "chatId": ""

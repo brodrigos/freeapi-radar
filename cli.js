@@ -12,7 +12,8 @@ import { pickKind, scoreCandidate } from './src/score.js';
 import { writeReports } from './src/report.js';
 import { toLiteLLM } from './src/litellm.js';
 import { SOURCES } from './src/seeds.js';
-import { collectFindings, dispatchAlert, formatAlert, loadAlertConfig } from './src/notify.js';
+import { collectFindings, dispatchAlert, emailReady, formatAlert, loadAlertConfig } from './src/notify.js';
+import { probeSmtp } from './src/email.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const DB = path.join(ROOT, 'data', 'radar.sqlite');
@@ -219,9 +220,38 @@ async function alertTest() {
     meta: { date: new Date().toLocaleString('pt-BR'), total: 0, verified: 0, dashboardUrl: cfg.dashboardUrl },
   });
   console.log(`telegram: ${cfg.telegram.token && cfg.telegram.chatId ? 'configurado' : c.dim('não configurado')}`);
+  console.log(
+    `email:    ${
+      emailReady(cfg) ? `${cfg.email.provider} → ${cfg.email.to}` : c.dim('não configurado (falta senha/chave)')
+    }`,
+  );
   console.log(`webhook:  ${cfg.webhook ?? c.dim('não configurado')}`);
-  for (const r of sent.results) console.log(`  ${r.channel}: ${r.ok ? c.green('enviado') : c.red(`falhou ${r.status}`)}`);
+  for (const r of sent.results) console.log(`  ${r.channel}: ${r.ok ? c.green('enviado') : c.red(`falhou ${r.status || ''} ${r.body ?? ''}`)}`);
   console.log(c.dim('registro local: reports/alerts.log'));
+}
+
+/** Diagnóstico do SMTP: conecta, mostra banner/recursos e se há credencial. */
+async function mailCheck() {
+  const cfg = loadAlertConfig(ROOT);
+  const e = cfg.email;
+  console.log(c.bold('\n▸ canal de e-mail'));
+  console.log(`provedor:  ${e.provider}`);
+  console.log(`destino:   ${e.to ?? c.dim('— configure email.to')}`);
+  console.log(`remetente: ${e.from || e.user || c.dim('—')}`);
+
+  if (e.provider !== 'smtp') {
+    console.log(emailReady(cfg) ? c.green('chave de API presente') : c.yellow('falta apiKey'));
+    return;
+  }
+
+  const info = await probeSmtp({ host: e.host, port: e.port, secure: e.secure });
+  console.log(`conexão:   ${c.green(info.greeting)}`);
+  console.log(`recursos:  ${info.capabilities.slice(0, 8).join(', ')}`);
+  console.log(
+    emailReady(cfg)
+      ? c.green('credencial presente — pronto para enviar')
+      : c.yellow('conexão ok, mas falta usuário/senha em config/alerts.json'),
+  );
 }
 
 function list() {
@@ -271,6 +301,7 @@ ${c.bold('freeapi-radar')} — radar de APIs de LLM com acesso gratuito
   node cli.js export            gera reports/litellm-radar.yaml (model_list pronto)
   node cli.js diff              compara as duas últimas execuções
   node cli.js alert-test        envia um alerta de teste pelos canais configurados
+  node cli.js mail-check        testa conexão SMTP e mostra se falta credencial
   node cli.js help
 
 ${c.dim('Chaves opcionais para prova de inferência: RADAR_KEYS=\'{"groq.com":"gsk_..."}\' node cli.js scan')}
@@ -301,6 +332,7 @@ try {
   else if (cmd === 'export') exportLitellm();
   else if (cmd === 'diff') diff();
   else if (cmd === 'alert-test') await alertTest();
+  else if (cmd === 'mail-check') await mailCheck();
   else help();
 } catch (err) {
   console.error(c.red(`\nerro: ${err.message}`));

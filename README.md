@@ -83,17 +83,42 @@ sem chave) e as evidências de cada caso. Sem servidor novo: o hub serve os arqu
 O scan agendado roda com `--notify` e dispara quando (a) aparece uma **janela grátis**, (b) entra
 candidato novo com score ≥ `--alert-min` (padrão 60) ou (c) muda a quantidade de modelos de um provedor.
 
-Canais (o configurado que existir vence; sempre grava `reports/alerts.log`):
+Canais (o configurado que existir vence; sempre grava `reports/alerts.log`): **e-mail**, Telegram e webhook.
 
 ```bash
-export TELEGRAM_BOT_TOKEN=123:ABC      # Telegram
-export TELEGRAM_CHAT_ID=123456789
-export RADAR_WEBHOOK_URL=https://...   # ou webhook genérico (Discord/Slack/n8n)
-node cli.js alert-test                 # valida os canais
+node cli.js mail-check                # testa a conexão SMTP (não envia)
+node cli.js alert-test                # envia de verdade pelos canais prontos
 ```
 
-Para a tarefa agendada, prefira `config/alerts.json` (copie de `config/alerts.example.json`): variáveis
-de ambiente podem não existir no contexto do Agendador de Tarefas.
+**E-mail** (o canal mais simples, sem bot): o cliente SMTP é feito à mão (`src/email.js`), com STARTTLS,
+AUTH PLAIN/LOGIN, assunto em RFC 2047 e corpo base64 — nada de dependência.
+
+```jsonc
+// config/alerts.json  (não versionado)
+{
+  "email": {
+    "provider": "smtp",                    // smtp | brevo | resend
+    "host": "smtp.gmail.com", "port": 465, "secure": true,
+    "user": "voce@gmail.com",
+    "pass": "senha-de-app-de-16-letras",   // Gmail exige senha de app (com 2FA ligado)
+    "from": "Free API Radar <voce@gmail.com>",
+    "to": "voce@gmail.com"
+  }
+}
+```
+
+Sem Gmail/2FA, dá para usar API: `{"provider":"brevo","apiKey":"...","from":"voce@gmail.com","to":"..."}`
+(Brevo free: 300/dia, basta verificar o remetente) ou `resend` (exige domínio verificado).
+
+Telegram e webhook continuam disponíveis por ambiente:
+
+```bash
+export TELEGRAM_BOT_TOKEN=123:ABC TELEGRAM_CHAT_ID=123456789
+export RADAR_WEBHOOK_URL=https://...   # Discord/Slack/n8n
+```
+
+Para a tarefa agendada use `config/alerts.json`: variáveis de ambiente podem não existir no contexto do
+Agendador de Tarefas.
 
 ### Gateway LiteLLM
 
@@ -152,6 +177,7 @@ O verificador e o score são genéricos: qualquer fonte que produza esse formato
 ```bash
 node test/smoke-dashboard.mjs          # JS do dashboard contra um DOM falso
 node test/verify-alerts.mjs            # canal webhook com receptor local
+node test/verify-email.mjs             # SMTP contra um servidor falso (AUTH + MIME)
 node test/verify-dashboard-tool.mjs    # abre a ferramenta no hub (Chrome headless/CDP)
 ```
 

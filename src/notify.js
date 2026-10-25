@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { request } from './http.js';
+import { sendEmail } from './email.js';
 
 const KIND_PT = {
   'free-window': 'janela grátis',
@@ -23,15 +24,36 @@ export function loadAlertConfig(rootDir) {
   } catch {
     /* configuração opcional */
   }
+  const emailFile = fromFile.email ?? {};
+  const emailSecure = process.env.RADAR_EMAIL_SECURE ?? emailFile.secure;
   return {
     telegram: {
       token: process.env.TELEGRAM_BOT_TOKEN ?? fromFile.telegram?.token ?? null,
       chatId: process.env.TELEGRAM_CHAT_ID ?? fromFile.telegram?.chatId ?? null,
     },
+    email: {
+      provider: process.env.RADAR_EMAIL_PROVIDER ?? emailFile.provider ?? 'smtp',
+      host: process.env.RADAR_EMAIL_HOST ?? emailFile.host ?? 'smtp.gmail.com',
+      port: Number(process.env.RADAR_EMAIL_PORT ?? emailFile.port ?? 465),
+      secure: String(emailSecure ?? 'true') !== 'false',
+      user: process.env.RADAR_EMAIL_USER ?? emailFile.user ?? null,
+      pass: process.env.RADAR_EMAIL_PASS ?? emailFile.pass ?? null,
+      apiKey: process.env.RADAR_EMAIL_API_KEY ?? emailFile.apiKey ?? null,
+      from: process.env.RADAR_EMAIL_FROM ?? emailFile.from ?? null,
+      to: process.env.RADAR_EMAIL_TO ?? emailFile.to ?? null,
+    },
     webhook: process.env.RADAR_WEBHOOK_URL ?? fromFile.webhook ?? null,
     minScore: Number(process.env.RADAR_ALERT_MIN ?? fromFile.minScore ?? 60),
     dashboardUrl: process.env.RADAR_DASHBOARD_URL ?? fromFile.dashboardUrl ?? 'http://127.0.0.1:8899/',
   };
+}
+
+/** O e-mail só entra em ação quando existe um meio de envio configurado. */
+export function emailReady(cfg) {
+  const e = cfg?.email ?? {};
+  if (!e.to) return false;
+  if (e.provider === 'brevo' || e.provider === 'resend') return Boolean(e.apiKey);
+  return Boolean(e.user && e.pass);
 }
 
 /** O que merece alerta: janela grátis, candidato novo bem pontuado, mudança de modelos. */
@@ -103,12 +125,23 @@ async function sendWebhook(url, payload) {
 }
 
 /** Envia o alerta pelos canais configurados e sempre registra em reports/alerts.log. */
-export async function dispatchAlert({ rootDir, text, findings, meta }) {
+export async function dispatchAlert({ rootDir, text, findings, meta, subject }) {
   const cfg = loadAlertConfig(rootDir);
   const results = [];
 
   if (cfg.telegram.token && cfg.telegram.chatId) {
     results.push(await sendTelegram(cfg.telegram.token, cfg.telegram.chatId, text));
+  }
+  if (emailReady(cfg)) {
+    try {
+      const sent = await sendEmail(cfg.email, {
+        subject: subject ?? `Free API Radar — ${findings.length} novidade(s) · ${meta.date}`,
+        text,
+      });
+      results.push({ channel: `email:${sent.provider}`, ok: sent.ok, status: sent.status, body: sent.detail });
+    } catch (err) {
+      results.push({ channel: 'email', ok: false, status: 0, body: err.message });
+    }
   }
   if (cfg.webhook) results.push(await sendWebhook(cfg.webhook, { text, findings, meta }));
 
@@ -118,5 +151,5 @@ export async function dispatchAlert({ rootDir, text, findings, meta }) {
     JSON.stringify({ at: new Date().toISOString(), text, findings, channels: results }) + '\n',
   );
 
-  return { configured: Boolean(cfg.telegram.token || cfg.webhook), results };
+  return { configured: Boolean(cfg.telegram.token || cfg.webhook || emailReady(cfg)), results };
 }
