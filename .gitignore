@@ -1,0 +1,13 @@
+# saídas geradas por scan/
+data/
+reports/
+dashboard-tool/latest.json
+
+# configuração local (pode conter token de bot)
+config/*
+!config/alerts.example.json
+
+# sistema
+node_modules/
+Thumbs.db
+.DS_Store

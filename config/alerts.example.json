@@ -1,0 +1,10 @@
+{
+  "_comentario": "Copie para config/alerts.json (não versionado) e preencha o que for usar. Variáveis de ambiente têm prioridade.",
+  "telegram": {
+    "token": "",
+    "chatId": ""
+  },
+  "webhook": "",
+  "minScore": 60,
+  "dashboardUrl": "http://127.0.0.1:8899/"
+}

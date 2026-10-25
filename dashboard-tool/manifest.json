@@ -1,0 +1,12 @@
+{
+  "id": "freeapi-radar",
+  "name": "Free API Radar",
+  "version": "1.0.0",
+  "icon": "📡",
+  "badge": "novo",
+  "tagline": "APIs de LLM grátis · verificação ao vivo",
+  "description": "Descobre free tiers, modelos :free e janelas grátis temporárias (como a do haimaker), verifica se o endpoint responde e mostra o que mudou desde o scan anterior.",
+  "scripts": ["tool.js"],
+  "styles": ["tool.css"],
+  "homepage": "https://github.com/brodrigos/freeapi-radar"
+}

@@ -1,0 +1,14 @@
+{
+  "name": "freeapi-radar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Radar que descobre, extrai e verifica APIs de LLM com acesso gratuito (free tiers, free windows, modelos :free).",
+  "engines": { "node": ">=22.5" },
+  "bin": { "radar": "./cli.js" },
+  "scripts": {
+    "scan": "node cli.js scan",
+    "report": "node cli.js report",
+    "list": "node cli.js list --free-only"
+  }
+}

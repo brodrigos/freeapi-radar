@@ -1,0 +1,11 @@
+# Entradas do radar que funcionam SEM chave — seguras para o gateway do LiteLLM.
+# Verificado em 2026-10-25: POST /chat/completions respondeu sem Authorization.
+model_list:
+  - model_name: radar-pollinations
+    litellm_params:
+      model: openai/openai
+      api_base: https://text.pollinations.ai/openai
+      api_key: sk-free-no-key
+      timeout: 45
+    model_info:
+      notes: "Pollinations — sem chave, sem cadastro; verificado em 25/10/2026 pelo freeapi-radar"
