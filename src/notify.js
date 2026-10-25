@@ -61,19 +61,21 @@ export function emailReady(cfg) {
 export function collectFindings(records, diff, { minScore = 60 } = {}) {
   const byKey = new Map(records.map((r) => [r.key, r]));
   const added = new Set(diff?.added ?? []);
+  const changed = new Set((diff?.changed ?? []).map((c) => c.key));
   const findings = [];
 
   for (const r of records) {
     const isNew = added.has(r.key) || !diff || diff.baseline;
     const isWindow = r.freeKind === 'free-window';
-    if (isWindow) {
+    // Janela já conhecida não repete o alerta a cada scan: só quando é nova ou mudou.
+    if (isWindow && (isNew || changed.has(r.key))) {
       findings.push({
         priority: 1,
         key: r.key,
         title: `${r.name} — ${KIND_PT[r.freeKind] ?? r.freeKind}`,
         line: `${r.models?.length ? `${r.models.slice(0, 3).join(', ')}` : 'modelos não listados'} · score ${r.score}${r.tier} · ${r.apiBase ?? r.homepage ?? ''}`,
       });
-    } else if (isNew && r.score >= minScore) {
+    } else if (!isWindow && isNew && r.score >= minScore) {
       findings.push({
         priority: 2,
         key: r.key,
