@@ -177,6 +177,18 @@ schtasks /Run /TN FreeApiRadar    # roda agora
 
 O launcher `scripts/scan-task.cmd` chama `node cli.js scan --notify` e anexa em `reports/task.log`.
 
+### Raio-x das chaves do gateway
+
+Um comando para saber, por provedor, quem está respondendo, quanto resta de cota e por que algo
+está bloqueado (403 de permissão, 402 sem crédito, 429 de cota diária):
+
+```bash
+node scripts/keys-check.mjs ["//DS3622xs/docker/litellm-gateway/config.yaml"]
+```
+
+Entende tanto entradas com `api_base` quanto as que usam prefixo nativo do LiteLLM
+(`openrouter/...`, `groq/...`).
+
 ## Adicionar uma fonte nova
 
 Crie uma função em `src/sources.js` que devolva candidatos no formato comum e registre-a em `collect()`:
