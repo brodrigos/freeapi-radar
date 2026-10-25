@@ -249,12 +249,16 @@ export async function sendEmail(cfg, { subject, text }) {
   if (cfg.provider === 'brevo' && cfg.apiKey) return sendBrevo({ ...cfg, from, to, subject, text });
   if (cfg.provider === 'resend' && cfg.apiKey) return sendResend({ ...cfg, from, to, subject, text });
 
+  // O Google mostra a senha de app em blocos ("abcd efgh ijkl mnop"); o SMTP quer sem espaços.
+  const host = cfg.host || 'smtp.gmail.com';
+  const pass = /gmail/i.test(host) ? String(cfg.pass ?? '').replace(/\s+/g, '') : cfg.pass;
+
   return sendSmtp({
-    host: cfg.host || 'smtp.gmail.com',
+    host,
     port: Number(cfg.port ?? 465),
     secure: cfg.secure !== false,
     user: cfg.user,
-    pass: cfg.pass,
+    pass,
     from,
     to,
     subject,
