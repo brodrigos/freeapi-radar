@@ -213,50 +213,75 @@ export async function sendSmtp({ host, port = 465, secure = true, user, pass, fr
 
 /* ------------------------------------------------------------- APIs HTTP */
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** 403/429/5xx da Brevo são intermitentes durante propagação: vale insistir. */
+const TRANSIENT = new Set([403, 429, 500, 502, 503, 504]);
+
 export async function sendBrevo({ apiKey, from, to, subject, text, baseUrl }) {
   const base = baseUrl || 'https://api.brevo.com/v3';
-  const res = await request(`${base}/smtp/email`, {
-    method: 'POST',
-    headers: { 'api-key': apiKey, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      sender: { email: bareAddress(from), name: 'Free API Radar' },
-      to: [{ email: bareAddress(to) }],
-      subject,
-      textContent: text,
-    }),
-    timeout: 20000,
-    retries: 0,
+  const body = JSON.stringify({
+    sender: { email: bareAddress(from), name: 'Free API Radar' },
+    to: [{ email: bareAddress(to) }],
+    subject,
+    textContent: text,
   });
-  let detail = res.text.slice(0, 300);
-  try {
-    const json = JSON.parse(res.text);
-    detail = json.message ?? json.code ?? detail;
-  } catch {
-    /* resposta não-JSON */
+
+  let last = null;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    const res = await request(`${base}/smtp/email`, {
+      method: 'POST',
+      headers: { 'api-key': apiKey, 'content-type': 'application/json' },
+      body,
+      timeout: 20000,
+      retries: 0,
+    });
+
+    let detail = res.text.slice(0, 300);
+    try {
+      const json = JSON.parse(res.text);
+      detail = json.messageId ?? json.message ?? json.code ?? detail;
+    } catch {
+      /* resposta não-JSON */
+    }
+    last = { provider: 'brevo', ok: res.ok, status: res.status, detail };
+
+    if (res.ok) return { ...last, attempts: attempt };
+    if (!TRANSIENT.has(res.status) || attempt === 4) break;
+    await sleep(1500 * attempt);
   }
-  return { provider: 'brevo', ok: res.ok, status: res.status, detail };
+  return last;
 }
 
 /** Valida a chave e lista remetentes: o erro clássico é enviar de um e-mail não verificado. */
 export async function probeBrevo({ apiKey, baseUrl }) {
   const base = baseUrl || 'https://api.brevo.com/v3';
   const headers = { 'api-key': apiKey, accept: 'application/json' };
-  const [account, senders] = await Promise.all([
-    request(`${base}/account`, { headers, timeout: 15000, retries: 0 }),
-    request(`${base}/senders`, { headers, timeout: 15000, retries: 0 }).catch(() => null),
-  ]);
+
+  let account = null;
+  let senders = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    account = await request(`${base}/account`, { headers, timeout: 15000, retries: 0 });
+    senders = await request(`${base}/senders`, { headers, timeout: 15000, retries: 0 }).catch(() => null);
+    // Contas novas alternam 403 enquanto a chave propaga: só aceita quando estabiliza.
+    if (account.ok && senders?.ok) break;
+    if (![403, 429, 500, 502, 503, 504].includes(account.status) || attempt === 3) break;
+    await sleep(1500 * attempt);
+  }
 
   let accountInfo = null;
-  try {
-    const json = JSON.parse(account.text);
-    accountInfo = {
-      email: json.email ?? null,
-      company: json.companyName ?? null,
-      credits: Array.isArray(json.plan) ? json.plan.map((p) => `${p.type}:${p.credits}`).join(' ') : null,
-      message: json.message ?? null,
-    };
-  } catch {
-    /* ignore */
+  if (account?.ok) {
+    try {
+      const json = JSON.parse(account.text);
+      accountInfo = {
+        email: json.email ?? null,
+        company: json.companyName ?? null,
+        credits: Array.isArray(json.plan) ? json.plan.map((p) => `${p.type}:${p.credits}`).join(' ') : null,
+        message: json.message ?? null,
+      };
+    } catch {
+      /* ignore */
+    }
   }
 
   let senderList = [];
@@ -271,7 +296,15 @@ export async function probeBrevo({ apiKey, baseUrl }) {
     }
   }
 
-  return { ok: account.ok, status: account.status, account: accountInfo, senders: senderList };
+  // Basta um dos dois para provar que a chave é reconhecida (a API da Brevo oscila).
+  const ok = Boolean(account?.ok || senders?.ok);
+  return {
+    ok,
+    status: account?.ok ? account.status : (senders?.status ?? account?.status ?? 0),
+    account: accountInfo,
+    senders: senderList,
+    flaky: Boolean(account && !account.ok && senders?.ok),
+  };
 }
 
 export async function sendResend({ apiKey, from, to, subject, text, baseUrl }) {

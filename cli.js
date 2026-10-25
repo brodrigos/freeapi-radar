@@ -317,7 +317,9 @@ async function mailCheck() {
       return;
     }
     console.log(
-      `chave:     ${c.green('válida')} · conta ${r.account?.email ?? '—'}${r.account?.credits ? ` · ${r.account.credits}` : ''}`,
+      `chave:     ${c.green('válida')} · ${
+        r.account?.email ? `conta ${r.account.email}` : 'conta não exposta nesta chamada (API da Brevo oscila)'
+      }${r.account?.credits ? ` · ${r.account.credits}` : ''}`,
     );
     const bare = String(e.from || e.user || '')
       .replace(/^.*<|>.*$/g, '')
