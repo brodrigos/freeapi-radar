@@ -125,6 +125,30 @@ export TELEGRAM_BOT_TOKEN=123:ABC TELEGRAM_CHAT_ID=123456789
 export RADAR_WEBHOOK_URL=https://...   # Discord/Slack/n8n
 ```
 
+### Celular: push grátis (ntfy) ou SMS pago (Brevo)
+
+**ntfy** entrega notificação no celular sem conta, sem telefone e sem custo: você instala o app,
+assina um tópico e o radar publica nele.
+
+```jsonc
+{ "ntfy": { "topic": "radar-<algo-aleatorio>", "server": "https://ntfy.sh" } }
+```
+
+```bash
+node cli.js phone-check   # publica, relê do servidor e confirma
+```
+
+**SMS da Brevo** existe (`POST /v3/transactionalSMS/send`), mas é **pago por crédito** — não entra nos
+300 e-mails/dia — e o `sender` alfanumérico pode exigir registro na operadora (no Brasil inclusive).
+Por isso vem desligado; para ligar:
+
+```jsonc
+{ "sms": { "enabled": true, "to": "+5511999999999", "sender": "Radar", "apiKey": "<mesma chave Brevo>" } }
+```
+
+`enabled: true` é obrigatório de propósito, para nunca gastar crédito por acidente. `phone-check` mostra
+quantos créditos de SMS a conta tem.
+
 Para a tarefa agendada use `config/alerts.json`: variáveis de ambiente podem não existir no contexto do
 Agendador de Tarefas.
 

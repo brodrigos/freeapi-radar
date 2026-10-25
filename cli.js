@@ -12,8 +12,9 @@ import { pickKind, scoreCandidate } from './src/score.js';
 import { writeReports } from './src/report.js';
 import { toLiteLLM } from './src/litellm.js';
 import { SOURCES } from './src/seeds.js';
-import { collectFindings, dispatchAlert, emailReady, formatAlert, loadAlertConfig } from './src/notify.js';
+import { collectFindings, dispatchAlert, emailReady, formatAlert, loadAlertConfig, ntfyReady, smsReady } from './src/notify.js';
 import { probeBrevo, probeSmtp } from './src/email.js';
+import { probeBrevoSms, readNtfy, sendNtfy } from './src/sms.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const DB = path.join(ROOT, 'data', 'radar.sqlite');
@@ -226,11 +227,68 @@ async function alertTest() {
     }`,
   );
   console.log(`webhook:  ${cfg.webhook ?? c.dim('não configurado')}`);
+  console.log(
+    `ntfy:     ${ntfyReady(cfg) ? `tópico ${cfg.ntfy.topic} @ ${cfg.ntfy.server}` : c.dim('não configurado (grátis)')}`,
+  );
+  console.log(
+    `sms:      ${smsReady(cfg) ? `${cfg.sms.sender} → ${cfg.sms.to}` : c.dim('desligado (Brevo cobra crédito por SMS)')}`,
+  );
   for (const r of sent.results) console.log(`  ${r.channel}: ${r.ok ? c.green('enviado') : c.red(`falhou ${r.status || ''} ${r.body ?? ''}`)}`);
   console.log(c.dim('registro local: reports/alerts.log'));
 }
 
-/** Diagnóstico do SMTP: conecta, mostra banner/recursos e se há credencial. */
+/** Diagnóstico dos canais de celular: ntfy (push grátis) e SMS da Brevo (pago). */
+async function phoneCheck() {
+  const cfg = loadAlertConfig(ROOT);
+  console.log(c.bold('\n▸ canais de celular'));
+
+  if (!ntfyReady(cfg)) {
+    console.log(`ntfy: ${c.yellow('não configurado')} — defina "ntfy": { "topic": "..." } em config/alerts.json`);
+  } else {
+    const message = `teste do Free API Radar · ${new Date().toLocaleString('pt-BR')}`;
+    const sent = await sendNtfy({
+      topic: cfg.ntfy.topic,
+      server: cfg.ntfy.server,
+      title: 'Free API Radar — teste',
+      message,
+      priority: 3,
+    });
+    console.log(
+      `ntfy: ${sent.ok ? c.green('publicado') : c.red(`falhou ${sent.status}`)} no tópico ${cfg.ntfy.topic} (${cfg.ntfy.server})`,
+    );
+    if (sent.ok) {
+      let recent = [];
+      for (let attempt = 0; attempt < 3; attempt++) {
+        recent = await readNtfy({ topic: cfg.ntfy.topic, server: cfg.ntfy.server, since: '2m' }).catch(() => []);
+        if (recent.some((m) => String(m.message ?? '').includes('teste do Free API Radar'))) break;
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+      const confirmed = recent.some((m) => String(m.message ?? '').includes('teste do Free API Radar'));
+      console.log(
+        confirmed
+          ? c.green('confirmado: a mensagem está no servidor (o app deve exibir em segundos)')
+          : c.yellow('publicado, mas não consegui reler — confira no app'),
+      );
+    }
+  }
+
+  if (!smsReady(cfg)) {
+    console.log(
+      `sms:  ${c.dim('desligado')} — a Brevo cobra crédito por SMS; para ligar: "sms": { "enabled": true, "to": "+55..." }`,
+    );
+    return;
+  }
+
+  const info = await probeBrevoSms({ apiKey: cfg.sms.apiKey, ...(cfg.sms.baseUrl ? { baseUrl: cfg.sms.baseUrl } : {}) });
+  if (!info.ok) {
+    console.log(`sms:  ${c.red(`falha ao consultar a conta (${info.status || info.error})`)}`);
+    return;
+  }
+  console.log(`sms:  conta ${info.email ?? '—'} · créditos de SMS: ${info.smsCredits ?? c.yellow('nenhum/desconhecido')}`);
+  if (!info.smsCredits) {
+    console.log(c.dim('      compre créditos em app.brevo.com → SMS para o envio funcionar'));
+  }
+}
 async function mailCheck() {
   const cfg = loadAlertConfig(ROOT);
   const e = cfg.email;
@@ -246,7 +304,16 @@ async function mailCheck() {
     }
     const r = await probeBrevo({ apiKey: e.apiKey, ...(e.baseUrl ? { baseUrl: e.baseUrl } : {}) });
     if (!r.ok) {
-      console.log(c.red(`chave inválida (HTTP ${r.status})`) + (r.account?.message ? ` — ${r.account.message}` : ''));
+      const msg = String(r.account?.message ?? '');
+      if (r.status === 401) {
+        console.log(c.red('chave não existe ou foi apagada (401 "Key not found") — gere outra em API Keys'));
+      } else if (r.status === 403 || /permission/i.test(msg)) {
+        console.log(c.red('chave sem permissão (403)') + ' — a Brevo reconhece a chave mas nega o acesso.');
+        console.log(c.dim('  causas comuns: conta ainda não ativada (confirme o e-mail de cadastro e o'));
+        console.log(c.dim('  remetente em Senders), ou chave criada com permissões restritas.'));
+      } else {
+        console.log(c.red(`falha ao validar (HTTP ${r.status})`) + (msg ? ` — ${msg}` : ''));
+      }
       return;
     }
     console.log(
@@ -274,6 +341,12 @@ async function mailCheck() {
   const info = await probeSmtp({ host: e.host, port: e.port, secure: e.secure });
   console.log(`conexão:   ${c.green(info.greeting)}`);
   console.log(`recursos:  ${info.capabilities.slice(0, 8).join(', ')}`);
+  if (/brevo/i.test(e.host)) {
+    console.log(
+      c.dim('           login = o que aparece em "SMTP" no painel da Brevo (costuma ser algo@smtp-brevo.com,'),
+    );
+    console.log(c.dim('           não o e-mail da conta); a senha é a chave xsmtpsib-…'));
+  }
   console.log(
     emailReady(cfg)
       ? c.green('credencial presente — pronto para enviar')
@@ -329,6 +402,7 @@ ${c.bold('freeapi-radar')} — radar de APIs de LLM com acesso gratuito
   node cli.js diff              compara as duas últimas execuções
   node cli.js alert-test        envia um alerta de teste pelos canais configurados
   node cli.js mail-check        testa conexão SMTP e mostra se falta credencial
+  node cli.js phone-check       testa push (ntfy) e mostra créditos de SMS da Brevo
   node cli.js help
 
 ${c.dim('Chaves opcionais para prova de inferência: RADAR_KEYS=\'{"groq.com":"gsk_..."}\' node cli.js scan')}
@@ -360,6 +434,7 @@ try {
   else if (cmd === 'diff') diff();
   else if (cmd === 'alert-test') await alertTest();
   else if (cmd === 'mail-check') await mailCheck();
+  else if (cmd === 'phone-check') await phoneCheck();
   else help();
 } catch (err) {
   console.error(c.red(`\nerro: ${err.message}`));

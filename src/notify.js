@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { request } from './http.js';
 import { sendEmail } from './email.js';
+import { sendBrevoSms, sendNtfy } from './sms.js';
 
 const KIND_PT = {
   'free-window': 'janela grátis',
@@ -25,6 +26,8 @@ export function loadAlertConfig(rootDir) {
     /* configuração opcional */
   }
   const emailFile = fromFile.email ?? {};
+  const smsFile = fromFile.sms ?? {};
+  const ntfyFile = fromFile.ntfy ?? {};
   const emailSecure = process.env.RADAR_EMAIL_SECURE ?? emailFile.secure;
   return {
     telegram: {
@@ -43,6 +46,18 @@ export function loadAlertConfig(rootDir) {
       to: process.env.RADAR_EMAIL_TO ?? emailFile.to ?? null,
       baseUrl: process.env.RADAR_EMAIL_BASE ?? emailFile.baseUrl ?? null,
     },
+    // SMS custa crédito: só entra com enabled: true explícito.
+    sms: {
+      enabled: String(process.env.RADAR_SMS_ENABLED ?? smsFile.enabled ?? 'false') === 'true',
+      apiKey: process.env.RADAR_SMS_API_KEY ?? smsFile.apiKey ?? emailFile.apiKey ?? null,
+      sender: process.env.RADAR_SMS_SENDER ?? smsFile.sender ?? 'Radar',
+      to: process.env.RADAR_SMS_TO ?? smsFile.to ?? null,
+      baseUrl: process.env.RADAR_SMS_BASE ?? smsFile.baseUrl ?? null,
+    },
+    ntfy: {
+      topic: process.env.RADAR_NTFY_TOPIC ?? ntfyFile.topic ?? null,
+      server: process.env.RADAR_NTFY_SERVER ?? ntfyFile.server ?? 'https://ntfy.sh',
+    },
     webhook: process.env.RADAR_WEBHOOK_URL ?? fromFile.webhook ?? null,
     minScore: Number(process.env.RADAR_ALERT_MIN ?? fromFile.minScore ?? 60),
     dashboardUrl: process.env.RADAR_DASHBOARD_URL ?? fromFile.dashboardUrl ?? 'http://127.0.0.1:8899/',
@@ -56,6 +71,9 @@ export function emailReady(cfg) {
   if (e.provider === 'brevo' || e.provider === 'resend') return Boolean(e.apiKey);
   return Boolean(e.user && e.pass);
 }
+
+export const smsReady = (cfg) => Boolean(cfg?.sms?.enabled && cfg.sms.apiKey && cfg.sms.to);
+export const ntfyReady = (cfg) => Boolean(cfg?.ntfy?.topic);
 
 /** O que merece alerta: janela grátis, candidato novo bem pontuado, mudança de modelos. */
 export function collectFindings(records, diff, { minScore = 60 } = {}) {
@@ -128,9 +146,17 @@ async function sendWebhook(url, payload) {
 }
 
 /** Envia o alerta pelos canais configurados e sempre registra em reports/alerts.log. */
+/** Versão curta para SMS/push: cabe em poucas linhas e diz o essencial. */
+export function formatShort(findings, meta) {
+  const items = findings.slice(0, 3).map((f) => `• ${f.title}`);
+  const extra = findings.length > 3 ? `+${findings.length - 3} outros` : null;
+  return [`Free API Radar — ${meta.date}`, ...items, extra].filter(Boolean).join('\n');
+}
+
 export async function dispatchAlert({ rootDir, text, findings, meta, subject }) {
   const cfg = loadAlertConfig(rootDir);
   const results = [];
+  const shortText = formatShort(findings, meta);
 
   if (cfg.telegram.token && cfg.telegram.chatId) {
     results.push(await sendTelegram(cfg.telegram.token, cfg.telegram.chatId, text));
@@ -146,6 +172,34 @@ export async function dispatchAlert({ rootDir, text, findings, meta, subject }) 
       results.push({ channel: 'email', ok: false, status: 0, body: err.message });
     }
   }
+  if (ntfyReady(cfg)) {
+    try {
+      const sent = await sendNtfy({
+        topic: cfg.ntfy.topic,
+        server: cfg.ntfy.server,
+        title: 'Free API Radar',
+        message: shortText,
+        priority: findings.some((f) => f.priority === 1) ? 4 : 3,
+      });
+      results.push({ channel: 'ntfy', ok: sent.ok, status: sent.status, body: sent.detail });
+    } catch (err) {
+      results.push({ channel: 'ntfy', ok: false, status: 0, body: err.message });
+    }
+  }
+  if (smsReady(cfg)) {
+    try {
+      const sent = await sendBrevoSms({
+        apiKey: cfg.sms.apiKey,
+        sender: cfg.sms.sender,
+        recipient: cfg.sms.to,
+        content: shortText,
+        ...(cfg.sms.baseUrl ? { baseUrl: cfg.sms.baseUrl } : {}),
+      });
+      results.push({ channel: 'sms', ok: sent.ok, status: sent.status, body: sent.detail });
+    } catch (err) {
+      results.push({ channel: 'sms', ok: false, status: 0, body: err.message });
+    }
+  }
   if (cfg.webhook) results.push(await sendWebhook(cfg.webhook, { text, findings, meta }));
 
   fs.mkdirSync(path.join(rootDir, 'reports'), { recursive: true });
@@ -154,5 +208,5 @@ export async function dispatchAlert({ rootDir, text, findings, meta, subject }) 
     JSON.stringify({ at: new Date().toISOString(), text, findings, channels: results }) + '\n',
   );
 
-  return { configured: Boolean(cfg.telegram.token || cfg.webhook || emailReady(cfg)), results };
+  return { configured: Boolean(cfg.telegram.token || cfg.webhook || emailReady(cfg) || smsReady(cfg) || ntfyReady(cfg)), results };
 }
